@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "realtime-monitoring-stack"
+version = "0.1.0"
+description = "Deployable enterprise Prometheus + Grafana + Loki monitoring stack with custom dashboards, PagerDuty integration, and SLO tracking."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Platform Engineering" }]
+dependencies = [
+    "PyYAML>=6.0",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+    "prometheus-client>=0.20",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+monitoring-stack = "realtime_monitoring_stack.cli:main"
+
+[tool.setuptools]
+packages = ["realtime_monitoring_stack", "demo"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+extend-select = ["I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["realtime_monitoring_stack", "demo"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --cov=realtime_monitoring_stack --cov-report=term-missing --cov-report=html"
+markers = [
+    "integration: requires a deployed stack (set MONITORING_STACK_INTEGRATION=1)",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["realtime_monitoring_stack"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+exclude_also = [
+    "if __name__ == .__main__.:",
+    "raise SystemExit",
+]

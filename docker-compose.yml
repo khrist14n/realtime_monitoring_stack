@@ -1,0 +1,150 @@
+# Enterprise monitoring stack.
+# Configs under ./generated are produced by `monitoring-stack config`
+# (run `monitoring-stack deploy` to generate + start everything).
+
+name: realtime-monitoring
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: monitoring-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle
+    volumes:
+      - ./generated/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./generated/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks: [monitoring]
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: monitoring-alertmanager
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./generated/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "9093:9093"
+    networks: [monitoring]
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: monitoring-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./generated/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./generated/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks: [monitoring]
+    depends_on:
+      - prometheus
+      - loki
+
+  loki:
+    image: grafana/loki:3.2.2
+    container_name: monitoring-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - ./generated/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+    networks: [monitoring]
+
+  promtail:
+    image: grafana/promtail:3.2.2
+    container_name: monitoring-promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/promtail-config.yaml
+    volumes:
+      - ./generated/promtail/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [monitoring]
+    depends_on:
+      - loki
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: monitoring-node-exporter
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    networks: [monitoring]
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: monitoring-cadvisor
+    restart: unless-stopped
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    networks: [monitoring]
+
+  # --- Demo apps: emit realistic HTTP metrics/logs so the stack has data ---
+  api-gateway:
+    build: ./demo
+    image: monitoring-demo-app:local
+    container_name: demo-api-gateway
+    restart: unless-stopped
+    environment:
+      SERVICE_NAME: api-gateway
+    ports:
+      - "8000:8000"
+    networks: [monitoring]
+
+  checkout:
+    image: monitoring-demo-app:local
+    container_name: demo-checkout
+    restart: unless-stopped
+    environment:
+      SERVICE_NAME: checkout
+    networks: [monitoring]
+
+  payments:
+    image: monitoring-demo-app:local
+    container_name: demo-payments
+    restart: unless-stopped
+    environment:
+      SERVICE_NAME: payments
+    networks: [monitoring]
+
+  auth:
+    image: monitoring-demo-app:local
+    container_name: demo-auth
+    restart: unless-stopped
+    environment:
+      SERVICE_NAME: auth
+    networks: [monitoring]
+
+networks:
+  monitoring:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  alertmanager-data:
+  grafana-data:
+  loki-data:

@@ -1,0 +1,90 @@
+# Service catalog consumed by `monitoring-stack config` / `monitoring-stack deploy`.
+#
+# Every service gets:
+#   - a Prometheus scrape job
+#   - SLO recording rules + multi-window multi-burn-rate alert rules
+#   - panels on the "Services Overview" and "SLO & Error Budget" dashboards
+#
+# SLI types:
+#   availability: error budget based on HTTP 5xx ratio of `requests_metric`
+#   latency:      error budget based on share of requests slower than
+#                 `latency_threshold_ms` on `latency_histogram_metric`
+
+scrape_interval: 15s
+evaluation_interval: 30s
+
+metrics:
+  # Metric names your applications are expected to expose. Override per
+  # service via the same keys if a service deviates from the convention.
+  requests_metric: http_requests_total
+  status_label: status
+  error_status_regex: "5.."
+  latency_histogram_metric: http_request_duration_seconds_bucket
+  latency_bucket_unit: seconds
+
+services:
+  - name: api-gateway
+    team: platform
+    targets: ["api-gateway:8000"]
+    slos:
+      - name: availability
+        sli: availability
+        target: 0.999           # 99.9% of requests succeed
+        window: 30d
+      - name: latency
+        sli: latency
+        target: 0.99            # 99% of requests under threshold
+        latency_threshold_ms: 300
+        window: 30d
+      - name: throughput
+        sli: throughput
+        target: 0.99            # 99% of the time, traffic must stay >= 2 req/s
+        throughput_per_sec: 2
+        window: 30d
+
+  - name: checkout
+    team: commerce
+    targets: ["checkout:8000"]
+    slos:
+      - name: availability
+        sli: availability
+        target: 0.99
+        window: 30d
+      - name: latency
+        sli: latency
+        target: 0.95
+        latency_threshold_ms: 500
+        window: 30d
+
+  - name: payments
+    team: commerce
+    targets: ["payments:8000"]
+    slos:
+      - name: availability
+        sli: availability
+        target: 0.9995
+        window: 30d
+      - name: latency
+        sli: latency
+        target: 0.99
+        latency_threshold_ms: 250
+        window: 30d
+      - name: freshness
+        sli: freshness
+        target: 0.99            # 99% of the time, the last successful run
+        max_freshness_seconds: 120   # must be < 2 minutes old
+        window: 30d
+
+  - name: auth
+    team: security
+    targets: ["auth:8000"]
+    slos:
+      - name: availability
+        sli: availability
+        target: 0.999
+        window: 30d
+      - name: latency
+        sli: latency
+        target: 0.95
+        latency_threshold_ms: 400
+        window: 30d

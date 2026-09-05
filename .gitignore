@@ -150,6 +150,9 @@ activemq-data/
 # Environments
 .env
 .envrc
+
+# Generated monitoring stack configs
+generated/
 .venv
 env/
 venv/
