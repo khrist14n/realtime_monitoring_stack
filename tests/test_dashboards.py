@@ -70,6 +70,16 @@ def test_dashboards_serialize_to_valid_json(cfg):
         assert json.loads(json.dumps(builder(cfg))) == builder(cfg)
 
 
+def test_slo_dashboard_queries_sanitized_rule_metric(cfg):
+    dash = build_slo_dashboard(cfg)
+    exprs = [
+        t["expr"] for panel in dash["panels"] if panel["type"] != "row" for t in panel["targets"]
+    ]
+    # per-service budget stat must query the sanitized recording-rule metric
+    assert any("slo:api_gateway:availability:error_budget_remaining * 100" in e for e in exprs)
+    assert not any("slo:api-gateway:" in e for e in exprs)
+
+
 def test_provisioning_files(cfg):
     ds = grafana.build_datasources()
     assert {d["uid"] for d in ds["datasources"]} == {"prometheus", "loki"}

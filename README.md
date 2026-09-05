@@ -80,6 +80,90 @@ Other commands:
 
 `--services services.yaml` selects the catalog, `--out generated` the output dir.
 
+## Containerized CLI (Docker)
+
+Don't want a local venv? The root `Dockerfile` builds an image with the
+`monitoring-stack` CLI and everything it needs at runtime — Python deps
+pinned in `requirements.lock`, plus the **docker CLI and compose plugin**,
+because `deploy`/`status`/`logs`/`down` shell out to `docker compose`. The
+image runs as a non-root user and carries a HEALTHCHECK.
+
+```bash
+# Build the CLI image (runtime target)
+docker build -t monitoring-stack:local .
+
+# Generate / validate configs against your checkout
+# (--user keeps the generated files owned by you, not the container user)
+docker run --rm -v "$PWD":/app --user "$(id -u):$(id -g)" monitoring-stack:local config
+docker run --rm -v "$PWD":/app --user "$(id -u):$(id -g)" monitoring-stack:local validate
+
+# Full deploy — the container's docker CLI talks to the host daemon via the
+# socket. The checkout is mounted at its own host path ($PWD:$PWD) because the
+# daemon resolves the compose file's bind mounts against host paths; host
+# networking lets the health checks reach the published ports.
+# (--env-file .env passes PAGERDUTY_ROUTING_KEY / Grafana credentials)
+docker run --rm --network host \
+  -v "$PWD":"$PWD" -w "$PWD" \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  --user "$(id -u):$(getent group docker | cut -d: -f3)" \
+  monitoring-stack:local deploy
+```
+
+`make` shortcuts:
+
+| Target               | What it does                                        |
+|----------------------|-----------------------------------------------------|
+| `make docker-build`  | Build the CLI image (`monitoring-stack:local`)      |
+| `make docker-config` | Generate configs inside the container (as your user)|
+| `make docker-validate` | Validate generated configs inside the container   |
+| `make docker-test`   | Build the `dev` image and run pytest inside it      |
+| `make docker-deploy` | Deploy the stack via the container (needs socket)   |
+| `make docker-status` | Container status + health checks via the container  |
+| `make docker-down`   | Stop the stack via the container                    |
+| `make docker-tox`    | Run `tox` (test/lint/validate envs) in the dev image|
+| `make docker-tox-integration` | Run `tox -e integration` (stack must be deployed) |
+
+The **dev target** (`docker build --target dev -t monitoring-stack:dev .`)
+adds the `[dev]` extras (pytest, ruff, tox — pinned in `requirements-dev.lock`)
+and runs `pytest` by default, so the whole test suite — with its 80% coverage
+gate — runs without a local venv:
+
+```bash
+docker run --rm -v "$PWD":/app --user "$(id -u):$(id -g)" monitoring-stack:dev
+```
+
+### Locked dependencies & multi-arch
+
+Both images install **pinned versions** from `requirements.lock` (runtime) and
+`requirements-dev.lock` (dev), so builds are reproducible — see the header
+comments in those files for how to regenerate them. Multi-arch builds work via
+buildx (`TARGETARCH` selects the matching docker CLI/compose binaries):
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 -t monitoring-stack:local .
+```
+
+## Podman instead of Docker
+
+The CLI works with **podman** as the container engine. Select it explicitly or
+let the CLI auto-detect it (auto-detection prefers `docker`, and falls back to
+`podman` when no `docker` binary is on the `PATH`):
+
+```bash
+export MONITORING_STACK_RUNTIME=podman
+monitoring-stack deploy
+```
+
+Requirements & notes:
+
+- **`podman compose`** must be available — podman's `compose` subcommand needs
+  `docker-compose` v2 or `podman-compose` installed alongside podman.
+- **promtail** ships Docker container logs by mounting the engine socket. With
+  podman, point that mount at podman's API socket in `docker-compose.yml`:
+  `- /run/podman/podman.sock:/var/run/docker.sock:ro` (rootful). For rootless
+  podman, use the per-user socket (e.g. `/run/user/$UID/podman/podman.sock`).
+- `monitoring-stack validate` / `check` / `status` are engine-agnostic (HTTP).
+
 ## PagerDuty integration
 
 1. In PagerDuty: **Integrations → Events API v2** → create an integration and copy
@@ -105,6 +189,11 @@ Define services and SLOs once in `services.yaml`; the generator produces:
   - `slo:{service}:{sli}:errors:ratio_rate{5m,30m,1h,6h,30d}` — error fraction
   - `slo:{service}:{sli}:burn_rate{1h,5m,6h,30m}` — burn rate vs error budget
   - `slo:{service}:{sli}:error_budget_remaining` — 1 − (errors / budget), negative = exhausted
+
+Rule names must be valid Prometheus metric names, so characters that aren't
+allowed there are replaced with `_` — e.g. a service named `api-gateway`
+produces `slo:api_gateway:availability:errors:ratio_rate5m` (labels, scrape
+jobs, and alerts keep the original name).
 - **Alert rules** implementing the Google SRE Workbook
   *multi-window, multi-burn-rate* pattern — the fast window catches spikes fast,
   the slow window avoids paging on blips.
@@ -268,12 +357,13 @@ and runs in pre-commit, tox (`tox -e lint`), and the CI `lint` job.
 
 | Test file | Covers |
 |---|---|
-| `tests/test_models.py` | services.yaml parsing, SLO validation (sli type, target range, latency threshold, duplicate names, metric overrides) |
-| `tests/test_prometheus.py` | scrape jobs, recording-rule names/windows, burn-rate math, multi-window multi-burn-rate alerts |
+| `tests/test_models.py` | services.yaml parsing, SLO validation (sli type, target range, latency threshold, duplicate names, metric overrides), rule-name sanitization (always valid metric names) |
+| `tests/test_prometheus.py` | scrape jobs, recording-rule names/windows, burn-rate math, multi-window multi-burn-rate alerts, rule names valid + internally consistent |
 | `tests/test_alertmanager.py` | PagerDuty receivers, severity routing, placeholder-key fallback |
-| `tests/test_dashboards.py` | panel structure, per-service panels, datasource uids, templating variable |
+| `tests/test_dashboards.py` | panel structure, per-service panels, datasource uids, templating variable, queries reference sanitized rule metrics |
 | `tests/test_render.py` | generated file tree, YAML/JSON validity, rule-file ↔ disk consistency, validation pass |
-| `tests/test_cli.py`, `tests/test_deploy.py` | CLI dispatch, compose wrappers, health-check logic (with fakes) |
+| `tests/test_validators.py` | every `validate` failure mode: bad YAML/JSON, missing rule files, empty rule groups, missing pagerduty receiver, promtail/dashboard issues |
+| `tests/test_cli.py`, `tests/test_deploy.py` | CLI dispatch for every command, compose wrappers, health-check logic, docker↔podman runtime selection (all with fakes) |
 | `tests/test_demo.py` | demo exporter: sampling distribution, deterministic seeding, metric emission |
 | `tests/test_integration.py` | smoke tests against a deployed stack (env-gated, `-m integration`) |
 
@@ -296,6 +386,9 @@ runs, including CI.
 ```
 realtime_monitoring_stack/   # Python package (models, generators, deploy, CLI)
 Makefile                     # make setup / test / validate / promtool / deploy …
+Dockerfile                   # containerized CLI (see “Containerized CLI (Docker)”)
+requirements*.lock           # pinned deps for the Docker images (reproducible)
+.env.example                 # optional PagerDuty/Grafana/runtime settings
 .github/workflows/ci.yml     # CI: tests + coverage, validation, promtool checks
 tox.ini, .pre-commit-config.yaml
 services.yaml                # service catalog + SLO definitions
@@ -312,6 +405,9 @@ tests/                       # pytest suite over the generators
   - `test` job (every push/PR) — `pytest` with the 80% coverage gate, config
     generation + validation, and the **HTML coverage report uploaded as an
     artifact** (`coverage-report`)
+  - `docker-cli` job — builds the Dockerfile and re-runs config generation,
+    validation, the pytest suite, and tox **inside the container**, so the
+    image itself stays working
   - `promtool` job — promtool + amtool validation via Docker
   - `deploy-integration` job (pushes to main / manual dispatch) — actually
     deploys the stack with `monitoring-stack deploy`, then runs

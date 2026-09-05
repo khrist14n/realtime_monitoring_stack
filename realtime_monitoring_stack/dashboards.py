@@ -287,7 +287,7 @@ def build_slo_dashboard(cfg: StackConfig) -> dict:
     stats = []
     for service in cfg.services:
         for slo in service.slos:
-            metric = f"slo:{service.name}:{slo.sli}:error_budget_remaining"
+            metric = f"slo:{service.rule_name}:{slo.sli}:error_budget_remaining"
             stats.append(
                 (
                     f"{service.name} · {slo.sli}",

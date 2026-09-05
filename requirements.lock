@@ -1,0 +1,13 @@
+# Runtime dependency lock for the CLI Docker image — generated from
+# `pip freeze` of the runtime install (the built image). The Dockerfile
+# installs exactly these versions, so builds are reproducible.
+# Regenerate when bumping dependencies:
+#   docker run --rm --entrypoint pip monitoring-stack:local freeze \
+#     | grep -v -E '^(realtime-monitoring-stack|pip|setuptools|wheel)==' | sort
+certifi==2026.7.22
+charset-normalizer==3.5.1
+idna==3.19
+prometheus_client==0.26.0
+PyYAML==6.0.3
+requests==2.34.2
+urllib3==2.7.0

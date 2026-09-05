@@ -112,15 +112,17 @@ def _error_ratio_expr(service: Service, slo: Slo, window: str) -> str:
         req = service.metric("requests_metric")
         total = f"sum by (service) (rate({req}{{{svc_label}}}[{window}]))"
         return f"1 - clamp_max({total} / {slo.throughput_per_sec:.6g}, 1)"
-    # freshness SLI: fraction of window where the job was stale
+    # freshness SLI: fraction of window where the job was stale. `bool` keeps
+    # the comparison emitting 0 (healthy) instead of dropping the series, so
+    # the SLO/burn/error-budget rules stay populated while the batch is fresh.
     fresh = service.metric("freshness_metric")
     max_age = slo.max_freshness_seconds
-    return f"avg_over_time((time() - {fresh}{{{svc_label}}} > {max_age:.6g})[{window}:1m])"
+    return f"avg_over_time((time() - {fresh}{{{svc_label}}} > bool {max_age:.6g})[{window}:1m])"
 
 
 def _ratio_rule(service: Service, slo: Slo, window: str) -> dict:
     return {
-        "record": f"slo:{service.name}:{slo.sli}:errors:ratio_rate{window}",
+        "record": f"slo:{service.rule_name}:{slo.sli}:errors:ratio_rate{window}",
         "expr": _error_ratio_expr(service, slo, window),
         "labels": {"service": service.name, "slo": slo.name, "team": service.team},
     }
@@ -128,9 +130,9 @@ def _ratio_rule(service: Service, slo: Slo, window: str) -> dict:
 
 def _burn_rate_rule(service: Service, slo: Slo, window: str) -> dict:
     return {
-        "record": f"slo:{service.name}:{slo.sli}:burn_rate{window}",
+        "record": f"slo:{service.rule_name}:{slo.sli}:burn_rate{window}",
         "expr": (
-            f"slo:{service.name}:{slo.sli}:errors:ratio_rate{window} / {slo.error_budget:.6g}"
+            f"slo:{service.rule_name}:{slo.sli}:errors:ratio_rate{window} / {slo.error_budget:.6g}"
         ),
         "labels": {"service": service.name, "slo": slo.name, "team": service.team},
     }
@@ -138,9 +140,9 @@ def _burn_rate_rule(service: Service, slo: Slo, window: str) -> dict:
 
 def _error_budget_rule(service: Service, slo: Slo) -> dict:
     return {
-        "record": f"slo:{service.name}:{slo.sli}:error_budget_remaining",
+        "record": f"slo:{service.rule_name}:{slo.sli}:error_budget_remaining",
         "expr": (
-            f"1 - (slo:{service.name}:{slo.sli}:errors:ratio_rate{slo.window} / "
+            f"1 - (slo:{service.rule_name}:{slo.sli}:errors:ratio_rate{slo.window} / "
             f"{slo.error_budget:.6g})"
         ),
         "labels": {"service": service.name, "slo": slo.name, "team": service.team},
@@ -157,8 +159,8 @@ def _alert_rule(service: Service, slo: Slo, kind: str) -> dict:
         else (windows["slow"], windows["slow_short"])
     )
     expr = (
-        f"slo:{service.name}:{slo.sli}:burn_rate{long_w} > {burn} and "
-        f"slo:{service.name}:{slo.sli}:burn_rate{short_w} > {burn}"
+        f"slo:{service.rule_name}:{slo.sli}:burn_rate{long_w} > {burn} and "
+        f"slo:{service.rule_name}:{slo.sli}:burn_rate{short_w} > {burn}"
     )
     prefix = "SloFastBurnCritical" if kind == "fast" else "SloSlowBurnWarning"
     name = f"{prefix}-{service.name}-{slo.sli}"

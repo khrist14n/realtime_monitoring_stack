@@ -1,0 +1,28 @@
+# VCS
+.git
+.gitignore
+
+# Python tooling / virtualenvs (potentially huge)
+.venv
+env/
+venv/
+ENV/
+.tox
+.pytest_cache
+.ruff_cache
+.mypy_cache
+htmlcov
+.coverage
+.coverage.*
+__pycache__
+*.py[codz]
+*.egg-info
+
+# Generated monitoring stack configs (the CLI produces these at runtime)
+generated
+
+# Local env / editor files
+.env
+.envrc
+.idea
+.vscode

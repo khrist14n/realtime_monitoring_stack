@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
+
 import pytest
 
-from realtime_monitoring_stack.models import ConfigError, load_config
+from realtime_monitoring_stack.models import ConfigError, Service, Slo, load_config
 
 
 def test_loads_default_catalog(cfg):
@@ -137,3 +139,60 @@ def test_per_service_metric_override(tmp_path):
     assert cfg.services[0].metric("requests_metric") == "grpc_server_handled_total"
     # defaults preserved for other keys
     assert cfg.services[0].metric("status_label") == "status"
+
+
+def test_rule_name_sanitizes_invalid_metric_name_characters():
+    cases = {
+        "api-gateway": "api_gateway",
+        "my.api/v2": "my_api_v2",
+        "checkout": "checkout",
+        "service with spaces": "service_with_spaces",
+    }
+    for raw, expected in cases.items():
+        assert Service(name=raw, targets=[], slos=[]).rule_name == expected
+
+
+def test_rule_name_prefixes_leading_digits():
+    assert Service(name="9lives", targets=[], slos=[]).rule_name == "_9lives"
+
+
+def test_rule_name_is_always_a_valid_metric_name():
+    pattern = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*")
+    for raw in ("api-gateway", "2fa", "a.b/c.d", "--dashes--", "", "UPPER_case"):
+        assert pattern.fullmatch(Service(name=raw, targets=[], slos=[]).rule_name), raw
+
+
+def test_latency_threshold_seconds_none_without_threshold():
+    slo = Slo(name="avail", sli="availability", target=0.99)
+    assert slo.latency_threshold_seconds is None
+
+
+def test_stack_config_slo_raises_key_error_for_unknown_service(cfg):
+    with pytest.raises(KeyError, match="No SLO unknown-service/whatever"):
+        cfg.slo("unknown-service", "whatever")
+
+
+def test_config_rejects_non_mapping_yaml(tmp_path):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("- just\n- a\n- list\n")
+    with pytest.raises(ConfigError, match="expected a YAML mapping"):
+        load_config(str(bad))
+
+
+def test_config_rejects_services_without_slos(tmp_path):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("services:\n  - name: api\n    targets: [api:8000]\n")
+    with pytest.raises(ConfigError, match="at least one SLO"):
+        load_config(str(bad))
+
+
+def test_config_requires_nonempty_service_name(tmp_path):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text(
+        "services:\n"
+        "  - name: '  '\n"
+        "    targets: [api:8000]\n"
+        "    slos: [{name: x, sli: availability, target: 0.99}]\n"
+    )
+    with pytest.raises(ConfigError, match="non-empty name"):
+        load_config(str(bad))

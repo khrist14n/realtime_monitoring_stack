@@ -53,6 +53,34 @@ jobs:
           name: coverage-report
           path: htmlcov/
 
+  # Containerized CLI: build the Dockerfile and re-run the config/validate
+  # flow plus the pytest suite inside the container, so the image itself
+  # stays working.
+  docker-cli:
+    name: Containerized CLI (config + validate + tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build runtime and dev images
+        run: |
+          docker build -t monitoring-stack:local .
+          docker build --target dev -t monitoring-stack:dev .
+
+      - name: Generate and validate configs in the container
+        run: |
+          make docker-config
+          make docker-validate
+
+      - name: Validate container-generated rules with promtool
+        run: make promtool
+
+      - name: Run test suite in the dev container
+        run: make docker-test
+
+      - name: Run tox (test, lint, validate) in the dev container
+        run: make docker-tox
+
   promtool:
     name: PromQL / Alertmanager validation
     runs-on: ubuntu-latest

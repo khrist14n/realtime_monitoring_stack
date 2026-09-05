@@ -68,8 +68,8 @@ def test_prometheus_targets_up():
 def test_slo_recording_rules_produce_series():
     _require_deployed_stack()
     for query in (
-        "slo:api-gateway:availability:errors:ratio_rate5m",
-        "slo:api-gateway:throughput:errors:ratio_rate5m",
+        "slo:api_gateway:availability:errors:ratio_rate5m",
+        "slo:api_gateway:throughput:errors:ratio_rate5m",
         "slo:payments:freshness:errors:ratio_rate5m",
     ):
         resp = requests.get(

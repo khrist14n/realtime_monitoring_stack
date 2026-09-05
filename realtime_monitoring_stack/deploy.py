@@ -1,8 +1,13 @@
-"""docker compose orchestration + post-deploy health checks."""
+"""docker/podman compose orchestration + post-deploy health checks.
+
+Compose commands run under the engine selected by `container_runtime()`:
+`MONITORING_STACK_RUNTIME=docker|podman`, or auto-detected from the PATH.
+"""
 
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -13,13 +18,44 @@ COMPOSE_FILE = "docker-compose.yml"
 HEALTH_RETRIES = 30
 HEALTH_INTERVAL = 5
 
+RUNTIME_ENV = "MONITORING_STACK_RUNTIME"
+
+
+def container_runtime() -> str:
+    """Container engine used for compose commands: 'docker' or 'podman'.
+
+    Select explicitly with MONITORING_STACK_RUNTIME=docker|podman; otherwise
+    auto-detect (docker preferred when present, podman as fallback). Podman
+    needs its `compose` subcommand (docker-compose v2 or podman-compose
+    installed) and a rootful/rootless podman socket for `deploy`.
+    """
+    configured = os.environ.get(RUNTIME_ENV, "").strip().lower()
+    if configured:
+        if configured not in ("docker", "podman"):
+            raise SystemExit(f"{RUNTIME_ENV} must be 'docker' or 'podman', got '{configured}'")
+        return configured
+    if shutil.which("docker"):
+        return "docker"
+    if shutil.which("podman"):
+        return "podman"
+    raise SystemExit(
+        f"no container runtime found: install docker or podman, or set {RUNTIME_ENV}=docker|podman"
+    )
+
+
+def _compose_command(*args: str) -> list[str]:
+    """Full argv for a compose invocation under the selected runtime."""
+    if container_runtime() == "podman":
+        return ["podman", "compose", "-f", COMPOSE_FILE, *args]
+    return ["docker", "compose", "-f", COMPOSE_FILE, *args]
+
 
 def _compose(*args: str, check: bool = True) -> subprocess.CompletedProcess:
-    cmd = ["docker", "compose", "-f", COMPOSE_FILE, *args]
+    cmd = _compose_command(*args)
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if check and result.returncode != 0:
         sys.stderr.write(result.stderr)
-        raise SystemExit(f"docker compose {' '.join(args)} failed (exit {result.returncode})")
+        raise SystemExit(f"{' '.join(cmd[:2])} {' '.join(args)} failed (exit {result.returncode})")
     return result
 
 
@@ -42,7 +78,7 @@ def compose_logs(service: str | None) -> None:
     args = (
         ["logs", "--tail=200", "-f"] if service is None else ["logs", "--tail=200", "-f", service]
     )
-    result = subprocess.run(["docker", "compose", "-f", COMPOSE_FILE, *args], check=False)
+    result = subprocess.run(_compose_command(*args), check=False)
     raise SystemExit(result.returncode)
 
 

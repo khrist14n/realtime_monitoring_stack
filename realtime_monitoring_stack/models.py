@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import re
 from typing import Any
 
 import yaml
@@ -85,6 +86,21 @@ class Service:
 
     def metric(self, key: str) -> str:
         return self.metrics.get(key, DEFAULT_METRICS[key])
+
+    @property
+    def rule_name(self) -> str:
+        """Service name sanitized into a valid Prometheus metric-name component.
+
+        Recording rule names must be valid metric names
+        (`[a-zA-Z_:][a-zA-Z0-9_:]*`), which excludes hyphens and most other
+        punctuation — so `api-gateway` becomes `api_gateway`, and a name
+        starting with a digit is prefixed with `_`. The original name is kept
+        for scrape jobs, labels, and alert names, which allow those characters.
+        """
+        safe = re.sub(r"[^a-zA-Z0-9_]", "_", self.name)
+        if not safe or not re.match(r"[a-zA-Z_]", safe):
+            return "_" + safe
+        return safe
 
 
 @dataclasses.dataclass(frozen=True)
